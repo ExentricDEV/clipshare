@@ -1,0 +1,56 @@
+# --- Secrets & Environment ---
+.env
+.env.local
+.env.*.local
+
+!.env.example
+
+# --- Dependencies ---
+node_modules/
+frontend/node_modules/
+keycloak-theme/node_modules/
+
+# --- Build Outputs ---
+# Java / Maven
+target/
+backend/target/
+transcoder/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+
+# Frontend (Vite)
+dist/
+frontend/dist/
+frontend/build/
+
+# Keycloakify
+keycloak-theme/dist_keycloak/
+keycloak-theme/dist/
+.keycloakify/
+
+# Allow the compiled theme JAR to be committed for easy deployment
+!keycloak-theme/dist_keycloak/*.jar
+
+# --- IDE & OS Files ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# --- Docker & Data ---
+# Ignore local volume data so you don't commit your database
+keycloak_data/
+postgres_data/
+rabbitmq_data/
+shared_uploads/
+
+# --- Logs ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

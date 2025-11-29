@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 250" width="350" height="250">
+  <defs>
+    <style>
+      <![CDATA[
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700&display=swap');
+        
+        .logo-color {
+          fill: #0088FF;
+          stroke: #0088FF;
+        }
+        .icon-shape {
+          stroke-width: 12;
+          stroke-linejoin: round;
+          stroke-linecap: round;
+        }
+        .text-style {
+          font-family: 'Nunito', sans-serif;
+          font-weight: 700;
+          font-size: 55px;
+          fill: #0088FF;
+          stroke: none;
+        }
+      ]]>
+    </style>
+  </defs>
+
+  <path class="logo-color icon-shape" d="M145,50 L205,90 L145,130 Z" />
+
+  <g transform="translate(60, 200)">
+    <text x="0" y="0" class="text-style">ClipShar</text>
+    
+    <text x="218" y="0" class="text-style" transform="rotate(-15, 233, -15)">e</text>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+{
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "mvn -f backend/pom.xml spring-boot:run",
+    "dev": "\"npm run dev:frontend\""
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
