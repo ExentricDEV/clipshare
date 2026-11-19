@@ -15,12 +15,18 @@ import { Upload, LogOut, Film } from "lucide-react";
 
 import { blue, grey } from "@mui/material/colors";
 import apiClient from "../api/axiosInstance";
-import { uploadFile, fetchVideos, getVideoStreamUrl } from "../api/videos";
+import { uploadFile, fetchVideos } from "../api/videos";
 import VideoCard from "../components/VideoCard";
-import type { VideoUploadResponse } from "../types/video.types";
-import keycloak from "../keycloak";
+import type {
+  VideoProgressEvent,
+  VideoUploadResponse,
+} from "../types/video.types";
+import keycloak, { freshToken } from "../keycloak";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { AxiosError } from "axios";
+
+/** Thrown from the SSE handlers to stop fetch-event-source's own retry loop; we reconnect ourselves. */
+class StreamClosed extends Error {}
 
 function Home() {
   const [videos, setVideos] = useState<VideoUploadResponse[]>([]);
@@ -58,7 +64,7 @@ function Home() {
       uploadFile(file)
         .then((response: VideoUploadResponse) => {
           console.log("Upload response:", response);
-          setVideos((prevVideos) => [...prevVideos, response]);
+          setVideos((prevVideos) => [response, ...prevVideos]);
           setNotification({
             open: true,
             message: "Video uploaded successfully!",
@@ -117,32 +123,75 @@ function Home() {
       });
   }, []);
 
-  // Listen for server-sent events for new processed videos
+  // Live transcode updates over server-sent events.
+  // The server closes each stream after 30 minutes, and access tokens only last 5, so every (re)connect
+  // fetches a fresh token first. Reconnects back off from 1s to 30s while the server is unreachable.
   useEffect(() => {
     const abortController = new AbortController();
+    let retryMs = 1000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    fetchEventSource(`${apiClient.defaults.baseURL}/videos/events`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${keycloak.token}`,
-      },
-      signal: abortController.signal,
+    const replaceVideo = (updated: VideoUploadResponse) =>
+      setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
 
-      onmessage: (event) => {
-        if (event.event === "video-processed") {
-          const newVideo: VideoUploadResponse = JSON.parse(event.data);
-          console.log("New video processed:", newVideo);
+    const connect = async () => {
+      if (abortController.signal.aborted) return;
+      const token = await freshToken();
+      try {
+        await fetchEventSource(`${apiClient.defaults.baseURL}/videos/events`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          signal: abortController.signal,
+          openWhenHidden: true,
 
-          // Update the video in the list if it already exists, otherwise add it
-          setVideos((prevVideos) =>
-            prevVideos.map((v) => (v.id === newVideo.id ? newVideo : v))
-          );
-        }
-      },
-    });
+          onopen: async (response) => {
+            if (!response.ok) throw new StreamClosed(`SSE ${response.status}`);
+            retryMs = 1000;
+          },
+          onmessage: (event) => {
+            if (event.event === "video-progress") {
+              const { id, progress }: VideoProgressEvent = JSON.parse(event.data);
+              setVideos((prev) =>
+                prev.map((v) =>
+                  v.id === id && progress > v.progress
+                    ? { ...v, status: "PROCESSING", progress }
+                    : v
+                )
+              );
+            } else if (event.event === "video-processed") {
+              replaceVideo(JSON.parse(event.data));
+            } else if (event.event === "video-failed") {
+              const failed: VideoUploadResponse = JSON.parse(event.data);
+              replaceVideo(failed);
+              setNotification({
+                open: true,
+                message: `"${failed.title}" could not be processed`,
+                severity: "error",
+              });
+            }
+          },
+          onclose: () => {
+            throw new StreamClosed("closed by server");
+          },
+          onerror: (err) => {
+            throw err; // stop the library's retry; reconnect below with a fresh token
+          },
+        });
+      } catch {
+        // fall through to reconnect
+      }
+      if (abortController.signal.aborted) return;
+      // re-sync in case events were missed while disconnected
+      fetchVideos().then(setVideos).catch(() => {});
+      timer = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 30_000);
+    };
+
+    connect();
 
     return () => {
       abortController.abort();
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
@@ -308,10 +357,12 @@ function Home() {
             {videos.map((video) => (
               <VideoCard
                 key={video.id}
-                videoId={video.id}
-                videoUrl={getVideoStreamUrl(video.id.toString())}
-                title={video.title}
-                processed={video.isProcessed}
+                video={video}
+                onChange={(updated) =>
+                  setVideos((prev) =>
+                    prev.map((v) => (v.id === updated.id ? updated : v))
+                  )
+                }
                 onDelete={() => {
                   setVideos((prevVideos) =>
                     prevVideos.filter((v) => v.id !== video.id)

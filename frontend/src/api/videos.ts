@@ -1,8 +1,13 @@
-import type { VideoUploadResponse } from "../types/video.types";
+import type {
+  PlaybackResponse,
+  VideoUploadResponse,
+  Visibility,
+} from "../types/video.types";
 import apiClient from "./axiosInstance";
 
 export interface VideoPatchRequest {
   title?: string;
+  visibility?: Visibility;
 }
 
 export const uploadFile = async (file: File): Promise<VideoUploadResponse> => {
@@ -22,8 +27,15 @@ export const fetchVideos = async (): Promise<VideoUploadResponse[]> => {
   return response.data;
 };
 
-export const getVideoStreamUrl = (id: string): string => {
-  return `${apiClient.defaults.baseURL}/videos/${id}`;
+/**
+ * Asks the backend for signed, short-lived URLs to play a video. The access check (private videos are
+ * owner/admin only) happens here; the returned URLs work without an Authorization header.
+ */
+export const getPlayback = async (id: string): Promise<PlaybackResponse> => {
+  const response = await apiClient.get<PlaybackResponse>(
+    `/videos/${id}/playback`
+  );
+  return response.data;
 };
 
 export const deleteVideo = async (id: string): Promise<void> => {

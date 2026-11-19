@@ -13,11 +13,46 @@ import {
   MediaMuteButton,
   MediaFullscreenButton,
 } from "media-chrome/react";
-import { Box } from "@mui/material";
-import { getVideoStreamUrl } from "../api/videos";
+import { Box, CircularProgress, Typography } from "@mui/material";
+import { useEffect, useState } from "react";
+import { AxiosError } from "axios";
+import { getPlayback } from "../api/videos";
+import type { PlaybackResponse } from "../types/video.types";
 
 export default function VideoPlayer() {
   const { id } = useParams();
+  const [playback, setPlayback] = useState<PlaybackResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    getPlayback(id)
+      .then(setPlayback)
+      .catch((e: AxiosError) => {
+        const status = e.response?.status;
+        setError(
+          status === 404
+            ? "This video doesn't exist or is private."
+            : status === 409
+              ? "This video is still processing. Try again in a moment."
+              : "Couldn't load this video."
+        );
+      });
+  }, [id]);
+
+  if (error || !playback) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", mt: 12 }}>
+        {error ? (
+          <Typography variant="h6" color="text.secondary">
+            {error}
+          </Typography>
+        ) : (
+          <CircularProgress />
+        )}
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -39,9 +74,12 @@ export default function VideoPlayer() {
           } as any
         }
       >
+        {/* react-player plays HLS through hls.js, which picks a rendition from measured bandwidth and
+            switches up or down between segments */}
         <ReactPlayer
           slot="media"
-          src={getVideoStreamUrl(id!)}
+          src={playback.url}
+          poster={playback.posterUrl ?? undefined}
           controls={false}
           width="100%"
           height="100%"
