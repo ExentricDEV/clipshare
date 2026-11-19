@@ -49,7 +49,10 @@ services:
     build:
       context: ./transcoder
       dockerfile: Dockerfile
-    container_name: transcoder-worker
+    # no container_name, so workers can be scaled out: docker compose up --scale transcoder=3
+    environment:
+      SPRING_RABBITMQ_USERNAME: ${SPRING_RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD}
     depends_on:
       - rabbitmq
     networks:
@@ -88,6 +91,8 @@ services:
       SPRING_RABBITMQ_PASSWORD: ${SPRING_RABBITMQ_PASSWORD}
       KEYCLOAK_URL: ${KEYCLOAK_URL}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      KEYCLOAK_ISSUER: ${VITE_KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}
+      PLAYBACK_SIGNING_KEY: ${PLAYBACK_SIGNING_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     depends_on:
       - keycloak

@@ -8,69 +8,59 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
-import org.springframework.http.HttpMethod;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Duration;
 
-@Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+/**
+ * Token-bucket rate limit on uploads: 3 per minute per user.
+ *
+ * Registered inside the Spring Security chain right after bearer-token authentication (see SecurityConfig).
+ * It used to run before Spring Security as a plain servlet filter, where no user was known yet, so it never
+ * limited anything.
+ */
 public class UploadRateLimitFilter extends OncePerRequestFilter {
+    private static final Logger log = LoggerFactory.getLogger(UploadRateLimitFilter.class);
+
     private final LoadingCache<String, Bucket> userBuckets = Caffeine.newBuilder()
             .expireAfterAccess(Duration.ofMinutes(10))
             .build(k -> newBucket());
 
-    private static final Logger log = LoggerFactory.getLogger(UploadRateLimitFilter.class);
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return !("POST".equals(request.getMethod()) && "/api/videos".equals(request.getRequestURI()));
+    }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        // Rate limit only upload requests
-        try {
-            String requestURI = request.getRequestURI();
-            HttpMethod method = HttpMethod.valueOf(request.getMethod());
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            // anonymous uploads are rejected by authorization further down the chain
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-            // Only apply to POST /api/videos
-            if (!(requestURI.equals("/api/videos") && method == HttpMethod.POST)) {
-                filterChain.doFilter(request, response);
-                return;
-            }
-
-            // If not authenticated, skip rate limiting
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication == null || !authentication.isAuthenticated()) {
-                filterChain.doFilter(request, response);
-                return;
-            }
-
-            String userId = authentication.getName();
-            Bucket bucket = userBuckets.get(userId);
-
-            if (bucket.tryConsume(1)) {
-                log.info("Upload request allowed for user: {}", userId);
-                filterChain.doFilter(request, response);
-            } else {
-                response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-                response.getWriter().write("Rate limit exceeded. Please try again later.");
-            }
-        } catch (Exception e) {
-            log.error("Error in UploadRateLimitFilter: ", e);
-            response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+        Bucket bucket = userBuckets.get(authentication.getName());
+        if (bucket.tryConsume(1)) {
+            filterChain.doFilter(request, response);
+        } else {
+            log.info("Upload rate limit hit for user {}", authentication.getName());
+            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+            response.setHeader("Retry-After", "60");
+            response.getWriter().write("Rate limit exceeded. Please try again later.");
         }
     }
 
-    private Bucket newBucket() {
-        // Define your bucket configuration here
+    private static Bucket newBucket() {
         return Bucket.builder()
-                .addLimit(Bandwidth.simple(3, Duration.ofMinutes(1)))
+                .addLimit(Bandwidth.builder().capacity(3).refillGreedy(3, Duration.ofMinutes(1)).build())
                 .build();
     }
 }

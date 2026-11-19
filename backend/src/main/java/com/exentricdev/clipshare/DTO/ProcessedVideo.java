@@ -1,4 +1,12 @@
 package com.exentricdev.clipshare.DTO;
 
-public record ProcessedVideo(String videoId, String outputPath) {
+import java.util.List;
+
+public record ProcessedVideo(
+    String videoId,
+    String masterPlaylistPath,
+    String posterPath,
+    double durationSeconds,
+    List<Integer> renditions
+) {
 }

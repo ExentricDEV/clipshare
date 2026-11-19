@@ -15,6 +15,18 @@ server {
         try_files $uri /index.html;
     }
 
+    # Server-sent events: pass each event through immediately instead of buffering the response
+    location = /api/videos/events {
+        set $backend_upstream http://backend:8080;
+        proxy_pass $backend_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+
     # Proxy API -> Spring backend
     location ^~ /api/ {
         # Setting the upstream in a variable forces Nginx to re-resolve the DNS

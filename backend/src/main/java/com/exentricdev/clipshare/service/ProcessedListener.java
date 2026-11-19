@@ -1,65 +1,58 @@
 package com.exentricdev.clipshare.service;
 
 import com.exentricdev.clipshare.DTO.ProcessedVideo;
-import com.exentricdev.clipshare.DTO.VideoResponse;
+import com.exentricdev.clipshare.config.RabbitConfig;
+import com.exentricdev.clipshare.entity.Video;
+import com.exentricdev.clipshare.entity.VideoStatus;
 import com.exentricdev.clipshare.repository.VideoRepository;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * Marks a video READY when the worker reports its HLS ladder is published.
+ * Idempotent: a duplicate message just rewrites the same fields.
+ */
 @Service
 public class ProcessedListener {
     private static final Logger log = LoggerFactory.getLogger(ProcessedListener.class);
 
     private final VideoRepository videoRepository;
     private final EmitterService emitterService;
+    private final VideoMapper mapper;
 
-    public ProcessedListener(VideoRepository videoRepository, EmitterService emitterService) {
+    public ProcessedListener(VideoRepository videoRepository, EmitterService emitterService, VideoMapper mapper) {
         this.videoRepository = videoRepository;
         this.emitterService = emitterService;
+        this.mapper = mapper;
     }
 
-    @RabbitListener(queues = "processed-videos")
-    public void handleProcessedVideo(ProcessedVideo processedVideo) {
-        String videoId = processedVideo.videoId();
-        String outputPath = processedVideo.outputPath();
+    @RabbitListener(queues = RabbitConfig.PROCESSED)
+    @Transactional
+    public void handleProcessedVideo(ProcessedVideo done) {
+        Video video = videoRepository.findById(done.videoId()).orElse(null);
+        if (video == null) {
+            // deleted while it was transcoding; nothing to update
+            log.warn("Processed video {} no longer exists", done.videoId());
+            return;
+        }
+        String rawPath = video.getStatus() == VideoStatus.READY ? null : video.getUrl();
 
-        log.info("Received processed video notification: videoId={}, outputPath={}", videoId, outputPath);
+        video.setUrl(done.masterPlaylistPath());
+        video.setPosterPath(done.posterPath());
+        video.setDurationSeconds(done.durationSeconds());
+        video.setRenditions(done.renditions());
+        video.setProgress(100);
+        video.setFailureReason(null);
+        video.setStatus(VideoStatus.READY);
+        videoRepository.save(video);
 
-        videoRepository.findById(videoId)
-                .map(video -> {
-                    String rawUrl = video.getUrl();
-
-                    video.setUrl(outputPath);
-                    video.setProcessed(true);
-
-                    // Delete the original unprocessed file
-                    try {
-                        Files.deleteIfExists(Path.of(rawUrl));
-                    } catch (IOException e) {
-                        log.error("Failed to delete original file for videoId: {}", videoId, e);
-                    }
-
-                    // Send notification to user about processing completion
-                    VideoResponse payload = new VideoResponse(video.getId(), video.getTitle(), video.getSize(), video.isProcessed());
-
-                    emitterService.notifyUser(
-                            video.getUploaderId(),
-                            "video-processed",
-                            payload
-                    );
-
-                    return videoRepository.save(video);
-                })
-                .ifPresentOrElse(
-                        video -> log.info("Updated video as processed for videoId: {}", videoId),
-                        () -> log.error("Video not found for videoId: {}", videoId)
-                );
+        if (rawPath != null && !rawPath.equals(done.masterPlaylistPath())) VideoService.deleteQuietly(Path.of(rawPath));
+        emitterService.notifyUser(video.getUploaderId(), "video-processed", mapper.toResponse(video));
+        log.info("videoId={} is READY ({}p)", video.getId(), done.renditions());
     }
 }
